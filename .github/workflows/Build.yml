@@ -2,6 +2,7 @@ name: Build RSDKv4-V
 
 on:
   push:
+workflow_dispatch:
     branches: [ "main", "master" ]
   pull_request:
     branches: [ "main", "master" ]
