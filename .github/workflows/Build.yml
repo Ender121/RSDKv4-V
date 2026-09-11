@@ -1,0 +1,134 @@
+name: Build RSDKv4-V
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  # ------------------------------------------------------------------
+  # Job 1: Compilación para Linux (Ubuntu 64-bit)
+  # ------------------------------------------------------------------
+  build-linux:
+    name: Build Linux (x64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del repositorio con submódulos
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Instalar dependencias de desarrollo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libsdl2-dev \
+            libogg-dev \
+            libvorbis-dev \
+            libglew-dev \
+            libgbm-dev
+
+      - name: Configurar CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compilar
+        run: cmake --build build --config Release -j$(nproc)
+
+      - name: Subir ejecutable de Linux como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: RSDKv4-V-Linux-x64
+          path: |
+            build/RSDKv4*
+            build/bin/*
+
+  # ------------------------------------------------------------------
+  # Job 2: Compilación para Windows (x64)
+  # ------------------------------------------------------------------
+  build-windows-x64:
+    name: Build Windows (x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout del repositorio con submódulos
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configurar CMake para MSVC x64
+        run: cmake -B build -A x64
+
+      - name: Compilar
+        run: cmake --build build --config Release
+
+      - name: Subir ejecutable de Windows (x64) como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: RSDKv4-V-Windows-x64
+          path: |
+            build/Release/*.exe
+            build/Release/*.dll
+            build/*.exe
+
+  # ------------------------------------------------------------------
+  # Job 3: Compilación para Windows (x86 / 32-bit)
+  # ------------------------------------------------------------------
+  build-windows-x86:
+    name: Build Windows (x86)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout del repositorio con submódulos
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configurar CMake para MSVC Win32
+        run: cmake -B build -A Win32
+
+      - name: Compilar
+        run: cmake --build build --config Release
+
+      - name: Subir ejecutable de Windows (x86) como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: RSDKv4-V-Windows-x86
+          path: |
+            build/Release/*.exe
+            build/Release/*.dll
+            build/*.exe
+
+  # ------------------------------------------------------------------
+  # Job 4: Compilación para macOS
+  # ------------------------------------------------------------------
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout del repositorio con submódulos
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Instalar dependencias con Homebrew
+        run: brew install sdl2 libogg libvorbis cmake glew
+
+      - name: Configurar CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compilar
+        run: cmake --build build --config Release
+
+      - name: Subir ejecutable de macOS como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: RSDKv4-V-macOS
+          path: |
+            build/RSDKv4*
+            build/*.app
