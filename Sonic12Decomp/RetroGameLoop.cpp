@@ -1,73 +1,175 @@
 #include "RetroEngine.hpp"
 
-void RetroGameLoop_Create(void *objPtr)
+void InitPauseMenu()
 {
-    NativeEntity_RetroGameLoop *entity = (NativeEntity_RetroGameLoop *)objPtr;
-    entity->pauseMenu                  = nullptr;
+    PauseSound();
+    ClearNativeObjects();
+    CREATE_ENTITY(MenuBG);
+    CREATE_ENTITY(PauseMenu);
 }
+
+void RetroGameLoop_Create(void *objPtr) { mixFiltersOnJekyll = Engine.useHighResAssets; }
 void RetroGameLoop_Main(void *objPtr)
 {
-    NativeEntity_RetroGameLoop *entity = (NativeEntity_RetroGameLoop *)objPtr;
-
     switch (Engine.gameMode) {
         case ENGINE_DEVMENU:
-            if (entity->pauseMenu && nativeEntityCount > 1) // dumb fix but yknow how it is
-                RemoveNativeObject(entity->pauseMenu);
-            entity->pauseMenu = nullptr;
+#if RETRO_HARDWARE_RENDER
+            gfxIndexSize        = 0;
+            gfxVertexSize       = 0;
+            gfxIndexSizeOpaque  = 0;
+            gfxVertexSizeOpaque = 0;
+#endif
 
-            processStageSelect();
+            ProcessStageSelect();
+            TransferRetroBuffer();
+            RenderRetroBuffer(64, 160.0);
             break;
-        case ENGINE_MAINGAME: ProcessStage(); break;
+
+        case ENGINE_MAINGAME:
+#if RETRO_HARDWARE_RENDER
+            gfxIndexSize        = 0;
+            gfxVertexSize       = 0;
+            gfxIndexSizeOpaque  = 0;
+            gfxVertexSizeOpaque = 0;
+            vertexSize3D        = 0;
+            indexSize3D         = 0;
+            render3DEnabled     = false;
+#endif
+            ProcessStage();
+            TransferRetroBuffer();
+            RenderRetroBuffer(64, 160.0);
+            break;
+
         case ENGINE_INITDEVMENU:
             Engine.LoadGameConfig("Data/Game/GameConfig.bin");
-            initDevMenu();
+            InitDevMenu();
             ResetCurrentStageFolder();
             break;
+
         case ENGINE_WAIT: break;
+
         case ENGINE_SCRIPTERROR:
             Engine.LoadGameConfig("Data/Game/GameConfig.bin");
-            initErrorMessage();
+            InitErrorMessage();
             ResetCurrentStageFolder();
             break;
+
         case ENGINE_INITPAUSE:
-            PauseSound();
-            // ClearNativeObjects();
-            Engine.gameMode = ENGINE_WAIT; // temp (maybe?) so pause menu renders on top
-            // CreateNativeObject(MenuBG_Create, MenuBG_Main); // temp until/if nativeObjs are fully complete
-            if (entity->pauseMenu && nativeEntityCount > 1)
-                RemoveNativeObject(entity->pauseMenu);
-            entity->pauseMenu = (NativeEntity_PauseMenu *)CreateNativeObject(PauseMenu_Create, PauseMenu_Main);
+            mixFiltersOnJekyll = false;
+            InitPauseMenu();
             break;
+
         case ENGINE_EXITPAUSE:
             Engine.gameMode = ENGINE_MAINGAME;
             ResumeSound();
-            if (entity->pauseMenu)
-                RemoveNativeObject(entity->pauseMenu);
-            entity->pauseMenu = nullptr;
+            TransferRetroBuffer();
             break;
+
         case ENGINE_ENDGAME:
             ClearScreen(1);
-            // RestoreNativeObjects();
+            TransferRetroBuffer();
+#if !RETRO_USE_ORIGINAL_CODE
+            if (skipStartMenu) {
+                activeStageList   = 0;
+                stageListPosition = 0;
+                stageMode         = STAGEMODE_LOAD;
+                Engine.gameMode   = ENGINE_MAINGAME;
+            }
+            else {
+                RestoreNativeObjects();
+#if !RETRO_USE_ORIGINAL_CODE
+                // LoadGameConfig() pisa todas las variables globales con sus valores por
+                // defecto, incluida timeAttack.result justo antes de que RecordsScreen la
+                // lea para guardar el récord (Sonic CD). La guardamos y la reinyectamos.
+                int taResultBackup = (Engine.gameType == GAME_SONICCD) ? GetGlobalVariableByName("timeAttack.result") : 0;
+#endif
+                Engine.LoadGameConfig("Data/Game/GameConfig.bin");
+#if !RETRO_USE_ORIGINAL_CODE
+                if (Engine.gameType == GAME_SONICCD)
+                    SetGlobalVariableByName("timeAttack.result", taResultBackup);
+#endif
+                activeStageList   = 0;
+                stageListPosition = 0;
+            }
+#else
+            RestoreNativeObjects();
             Engine.LoadGameConfig("Data/Game/GameConfig.bin");
             activeStageList   = 0;
             stageListPosition = 0;
-            initStartMenu(0);
+#endif
             break;
+
         case ENGINE_RESETGAME: // Also called when 2P VS disconnects
             ClearScreen(1);
-            // RestoreNativeObjects();
-            initStartMenu(1);
+            TransferRetroBuffer();
+#if !RETRO_USE_ORIGINAL_CODE
+            if (skipStartMenu) {
+                activeStageList   = 0;
+                stageListPosition = 0;
+                stageMode         = STAGEMODE_LOAD;
+                Engine.gameMode   = ENGINE_MAINGAME;
+            }
+            else
+                RestoreNativeObjects();
+#else
+            RestoreNativeObjects();
+#endif
             break;
-        case ENGINE_VIDEOWAIT:
-            if (ProcessVideo() == 1)
-                Engine.gameMode = ENGINE_MAINGAME;
+
+#if !RETRO_USE_ORIGINAL_CODE && RETRO_USE_NETWORKING
+        case ENGINE_CONNECT2PVS: {
+            CREATE_ENTITY(MultiplayerScreen)->bg = CREATE_ENTITY(MenuBG);
+            NativeEntity_FadeScreen *fade        = CREATE_ENTITY(FadeScreen);
+            fade->state                          = FADESCREEN_STATE_FADEIN;
+            fade->delay                          = 1.5;
+            fade->fadeSpeed                      = 1.0;
+            Engine.gameMode                      = ENGINE_WAIT2PVS;
             break;
-        case ENGINE_STARTMENU: processStartMenu(); break;
-        case ENGINE_CONNECT2PVS:
-            // connect screen goes here
+        }
+        case ENGINE_WAIT2PVS:
+            // wait for vs response
+            if (dcError)
+                CREATE_ENTITY(MultiplayerHandler);
             break;
+
+#endif
+#if RETRO_USE_MOD_LOADER
+        case ENGINE_INITMODMENU:
+            Engine.LoadGameConfig("Data/Game/GameConfig.bin");
+            InitDevMenu();
+
+            ResetCurrentStageFolder();
+
+            SetupTextMenu(&gameMenu[0], 0);
+            AddTextMenuEntry(&gameMenu[0], "MOD LIST");
+            SetupTextMenu(&gameMenu[1], 0);
+            InitMods(); // reload mods
+
+            char buffer[0x100];
+            for (int m = 0; m < modList.size(); ++m) {
+                StrCopy(buffer, modList[m].name.c_str());
+                StrAdd(buffer, ": ");
+                StrAdd(buffer, modList[m].active ? "  Active" : "Inactive");
+                AddTextMenuEntry(&gameMenu[1], buffer);
+            }
+
+            gameMenu[1].alignment      = MENU_ALIGN_RIGHT;
+            gameMenu[1].selectionCount = 3;
+            gameMenu[1].selection1     = 0;
+            if (gameMenu[1].rowCount > 18)
+                gameMenu[1].visibleRowCount = 18;
+            else
+                gameMenu[1].visibleRowCount = 0;
+
+            gameMenu[0].alignment        = MENU_ALIGN_CENTER;
+            gameMenu[0].selectionCount   = 1;
+            gameMenu[1].timer            = 0;
+            gameMenu[1].visibleRowOffset = 0;
+            stageMode                    = DEVMENU_MODMENU;
+            break;
+#endif
         default:
-            printLog("GameMode '%d' Called", Engine.gameMode);
+            PrintLog("GameMode '%d' Called", Engine.gameMode);
             activeStageList   = 0;
             stageListPosition = 0;
             stageMode         = STAGEMODE_LOAD;
